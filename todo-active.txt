@@ -1,0 +1,39 @@
+# 🎯 TODO ATTIVI - AI Workout Coach
+
+## 🚀 Prossimi Task da Implementare
+
+### 🤖 AI Coaching Enhancement (Priorità Alta)
+- [ ] **Adaptive workouts** adattamento basato su performance
+- [ ] **Form analysis** feedback postura tramite AI
+- [ ] **Recovery recommendations** riposo basato su intensità
+- [ ] **Personalized progression** incremento personalizzato
+
+### 📊 Advanced Analytics
+- [ ] **Performance trends** grafici miglioramento nel tempo
+- [ ] **Muscle group tracking** sviluppo specifico aree
+- [ ] **Calories calculation** stima consumo accurata
+- [ ] **Heart rate zones** integrazione sensori
+
+### 🎯 Workout Expansion
+- [ ] **Custom routines** creazione workout personalizzati
+- [ ] **Video demonstrations** clip esercizi integrati
+- [ ] **Equipment variations** alternative senza attrezzi
+- [ ] **Injury prevention** esercizi riabilitazione
+
+### 🔄 Social & Motivation
+- [ ] **Achievement system** badge e milestone
+- [ ] **Workout sharing** condivisione risultati
+- [ ] **Challenge system** sfide personali/social
+- [ ] **Coach chat** supporto motivazionale AI
+
+---
+
+## 📅 Timeline Realistica
+
+**Questa settimana:** Adaptive workouts + Performance trends  
+**Prossima settimana:** Custom routines + Achievement system  
+**Questo mese:** Form analysis AI + Social features
+
+---
+
+**Nota:** 40+ esercizi base già implementati, focus su personalizzazione AI

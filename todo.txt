@@ -1,0 +1,23 @@
+# 📋 TODO - AI Workout Coach
+
+## 📁 Nuova Organizzazione File
+
+**Per task immediati:** → `todo-active.txt`  
+**Per modifiche completate:** → `changelog.txt`
+
+---
+
+## 📝 File Creati
+- ✅ **todo-active.txt** - AI Enhancement + Advanced Analytics + Social features
+- ✅ **changelog.txt** - Sistema completo 40+ esercizi + Timer preciso
+
+---
+
+## 🎯 Status Core Features
+- ✅ **40+ esercizi** database completo operativo
+- ✅ **Timer intelligente** preciso con feedback audio/visual
+- ✅ **Avatar personalizzabili** sistema completo
+
+---
+
+**Istruzioni:** Usa `todo-active.txt` per AI coaching e advanced features!
