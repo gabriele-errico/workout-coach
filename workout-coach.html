@@ -1159,6 +1159,7 @@
                 <button id="difficultyBtn" class="btn btn-success">📊 Principiante</button>
                 <button id="categoryBtn" class="btn btn-purple">🎯 Tutti</button>
                 <button id="soundBtn" class="btn btn-secondary">🔊 Audio</button>
+                <button id="notifyBtn" class="btn btn-secondary" title="Avvisi di sistema quando l'app è in background">🔔 Notifiche</button>
                 <button id="dashboardBtn" class="btn btn-info">📊 Dashboard</button>
                 <button id="shareBtn" class="btn btn-social">📱 Condividi</button>
                 <button id="exportBtn" class="btn btn-secondary">💾 Esporta</button>
@@ -1604,6 +1605,8 @@
         let clockTimer = null;
         let longestStreak = 0;
         let taskDueAt = 0;
+        let notificationsEnabled = true; // preferenza: servono anche i permessi del browser
+        let currentTaskKey = 0;          // identifica l'esercizio a cui si riferisce una notifica
         const MAX_HISTORY = 500;
         const APP_TITLE = document.title;
 
@@ -1809,6 +1812,7 @@
             difficultyBtn: document.getElementById('difficultyBtn'),
             categoryBtn: document.getElementById('categoryBtn'),
             soundBtn: document.getElementById('soundBtn'),
+            notifyBtn: document.getElementById('notifyBtn'),
             dashboardBtn: document.getElementById('dashboardBtn'),
             closeDashboardBtn: document.getElementById('closeDashboardBtn'),
             dashboardCard: document.getElementById('dashboardCard'),
@@ -1851,6 +1855,7 @@
                     sessionStats = normalizeSessionStats(data.sessionStats);
                     currentAvatar = data.avatar || '👤';
                     longestStreak = data.longestStreak || 0;
+                    notificationsEnabled = data.notificationsEnabled !== false;
                 } else {
                     completedExercises = [];
                     likedExercises = new Set();
@@ -1870,6 +1875,7 @@
                     difficulty: currentDifficulty,
                     category: currentCategory,
                     soundEnabled: isSoundEnabled,
+                    notificationsEnabled: notificationsEnabled,
                     completedExercises: completedExercises.slice(0, MAX_HISTORY),
                     likedExercises: Array.from(likedExercises),
                     sessionStats: sessionStats,
@@ -1897,6 +1903,16 @@
             if (elements.difficultyBtn) elements.difficultyBtn.addEventListener('click', cycleDifficulty);
             if (elements.categoryBtn) elements.categoryBtn.addEventListener('click', cycleCategory);
             if (elements.soundBtn) elements.soundBtn.addEventListener('click', toggleSound);
+            if (elements.notifyBtn) elements.notifyBtn.addEventListener('click', toggleNotifications);
+
+            // "💪 Fatto!" premuto direttamente dalla notifica
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.addEventListener('message', (e) => {
+                    if (e.data && e.data.type === 'TASK_DONE' && e.data.taskKey === currentTaskKey) {
+                        handleTaskComplete();
+                    }
+                });
+            }
             if (elements.dashboardBtn) elements.dashboardBtn.addEventListener('click', showDashboard);
             if (elements.closeDashboardBtn) elements.closeDashboardBtn.addEventListener('click', closeDashboard);
             if (elements.changeIdBtn) elements.changeIdBtn.addEventListener('click', changeUserId);
@@ -2110,8 +2126,82 @@
         // Timer principale con precisione migliorata
         function setNewTask(task) {
             currentTask = task;
+            currentTaskKey = Date.now();
             currentTaskLiked = likedExercises.has(task.id);
             currentTaskDone = false;
+        }
+
+        // === NOTIFICHE DI SISTEMA ===
+        // Avvisano del nuovo esercizio quando l'app è in background (altra scheda o finestra).
+        // Funzionano finché la pagina resta aperta: con il browser chiuso non arrivano.
+        function canNotify() {
+            return notificationsEnabled && 'Notification' in window && Notification.permission === 'granted';
+        }
+
+        function requestNotificationPermission() {
+            if (!('Notification' in window)) return Promise.resolve('unsupported');
+            if (Notification.permission !== 'default') return Promise.resolve(Notification.permission);
+            return Notification.requestPermission();
+        }
+
+        function toggleNotifications() {
+            if (!('Notification' in window)) {
+                showMessage('Questo browser non supporta le notifiche di sistema');
+                return;
+            }
+            if (canNotify()) {
+                notificationsEnabled = false;
+                closeTaskNotifications();
+                showMessage('Notifiche disattivate 🔕');
+                updateUI();
+                saveUserData();
+                return;
+            }
+            notificationsEnabled = true;
+            requestNotificationPermission().then(permission => {
+                showMessage(permission === 'granted'
+                    ? 'Notifiche attivate 🔔 Ti avviso anche quando l\'app è in background'
+                    : 'Notifiche bloccate dal browser: consentile dalle impostazioni del sito (icona accanto all\'indirizzo)');
+                updateUI();
+                saveUserData();
+            });
+        }
+
+        function showTaskNotification(task) {
+            // Se stai guardando l'app bastano il messaggio e il suono
+            if (!canNotify() || (document.visibilityState === 'visible' && document.hasFocus())) return;
+
+            const title = `💪 ${task.name}`;
+            const options = {
+                body: `${task.quantity || ''}\n${task.instructions}`,
+                tag: 'workout-task',
+                renotify: true,
+                requireInteraction: true,
+                icon: './icons/icon-192x192.png',
+                data: { taskKey: currentTaskKey }
+            };
+
+            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                // Tramite service worker: necessario su Android e permette il bottone "Fatto!"
+                navigator.serviceWorker.ready
+                    .then(reg => reg.showNotification(title, { ...options, actions: [{ action: 'done', title: '💪 Fatto!' }] }))
+                    .catch(() => {});
+            } else {
+                try {
+                    const notification = new Notification(title, options);
+                    notification.onclick = () => { window.focus(); notification.close(); };
+                } catch (e) {
+                    console.log('Notifica non disponibile:', e);
+                }
+            }
+        }
+
+        function closeTaskNotifications() {
+            if (!('serviceWorker' in navigator)) return;
+            navigator.serviceWorker.getRegistration()
+                .then(reg => reg ? reg.getNotifications({ tag: 'workout-task' }) : [])
+                .then(list => list.forEach(n => n.close()))
+                .catch(() => {});
         }
 
         function scheduleNextTask() {
@@ -2139,6 +2229,7 @@
                         document.title = `🔔 ${newTask.name} - ${APP_TITLE}`;
                         
                         playNotificationSound();
+                        showTaskNotification(newTask);
                         scheduleNextTask();
                         saveUserData();
                     }
@@ -2187,6 +2278,9 @@
             
             scheduleNextTask();
             
+            if (notificationsEnabled) {
+                requestNotificationPermission().then(() => updateUI());
+            }
             playNotificationSound();
             startTimer();
             updateUI();
@@ -2218,6 +2312,7 @@
             }
             sessionStats.totalSeconds = (sessionStats.totalSeconds || 0) + getSessionElapsed();
             document.title = APP_TITLE;
+            closeTaskNotifications();
             isActive = false;
             isPaused = false;
             currentTask = null;
@@ -2337,6 +2432,7 @@
             
             longestStreak = Math.max(longestStreak, sessionStats.streak);
             document.title = APP_TITLE;
+            closeTaskNotifications();
             
             completedExercises.unshift({
                 ...currentTask,
@@ -2385,6 +2481,9 @@
 
             // Audio
             elements.soundBtn.textContent = isSoundEnabled ? '🔊 Audio' : '🔇 Audio';
+            if (elements.notifyBtn) {
+                elements.notifyBtn.textContent = canNotify() ? '🔔 Notifiche' : '🔕 Notifiche';
+            }
 
             // Timer
             if (isActive) {
@@ -2836,6 +2935,8 @@
                 showDashboard();
             } else if (e.key === 'a') {
                 showAvatarSelector();
+            } else if (e.key === 'n') {
+                toggleNotifications();
             } else if (e.key === 'h' || e.key === '?') {
                 showKeyboardHelp(true);
             }
@@ -2902,6 +3003,7 @@
                     <kbd>L</kbd> Mi piace<br>
                     <kbd>D</kbd> Dashboard<br>
                     <kbd>A</kbd> Cambia avatar<br>
+                    <kbd>N</kbd> Notifiche on/off<br>
                     <kbd>Ctrl+S</kbd> Condividi<br>
                     <kbd>Esc</kbd> Chiudi finestre<br>
                     <kbd>H/?</kbd> Mostra aiuto<br>

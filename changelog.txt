@@ -2,6 +2,12 @@
 
 ## ✅ Modifiche Completate
 
+### v1.2 - Notifiche di sistema
+- ✅ **🔔 Notifiche** quando arriva un nuovo esercizio e l'app è in background (bottone o tasto `N`)
+- ✅ Bottone **💪 Fatto!** direttamente nella notifica; clic sulla notifica riporta all'app
+- ✅ Permesso chiesto all'avvio della prima sessione; la notifica si chiude da sola a esercizio fatto
+- ✅ Icone PNG per notifiche e installazione; README
+
 ### v1.1 - Correzione bug
 - ✅ Scelta avatar funzionante (prima il selettore restava aperto con un errore)
 - ✅ Scorciatoie da tastiera collegate alle funzioni reali: Spazio avvia/pausa, Invio "Fatto", L mi piace, D dashboard, A avatar, Esc chiude, Ctrl+S condividi
