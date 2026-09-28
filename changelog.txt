@@ -2,6 +2,20 @@
 
 ## ✅ Modifiche Completate
 
+### v1.1 - Correzione bug
+- ✅ Scelta avatar funzionante (prima il selettore restava aperto con un errore)
+- ✅ Scorciatoie da tastiera collegate alle funzioni reali: Spazio avvia/pausa, Invio "Fatto", L mi piace, D dashboard, A avatar, Esc chiude, Ctrl+S condividi
+- ✅ Condivisione risultati funzionante, con statistiche reali; la finestra non compare più in fondo alla pagina
+- ✅ Timer preciso anche con la scheda in background; la pausa conserva il tempo rimasto
+- ✅ Modalità Progressive che accorcia davvero le pause (da ~30 a 5 minuti)
+- ✅ Streak azzerato quando un esercizio viene saltato; record streak non più perso
+- ✅ Attività degli ultimi 7 giorni corretta (prima sempre 0)
+- ✅ Dashboard con sessioni e tempo reali (prima stime) e sempre aggiornata
+- ✅ Storico fino a 500 esercizi (prima 50, rendendo irraggiungibile "Century Club")
+- ✅ Alle 22 la sessione si chiude senza finestra di conferma
+- ✅ "Mi piace" già attivo per gli esercizi preferiti; titolo della scheda con 🔔 al nuovo esercizio
+- ✅ Import con conferma; service worker semplificato (solo cache offline)
+
 ### v1.0 - Personal Trainer Virtuale Completo
 **Data: 2025-01-XX**
 - ✅ **40+ esercizi** database completo bodyweight e pesi
@@ -24,7 +38,7 @@
 - ✅ **Workout history** cronologia allenamenti
 
 ### Timer System Advanced
-- ✅ **Precision timing** timer accurato al millisecondo
+- ✅ **Precision timing** timer basato sull'orario di scadenza
 - ✅ **Audio cues** segnali sonori inizio/fine
 - ✅ **Visual countdown** progressbar animata
 - ✅ **Auto-progression** passaggio automatico esercizi
@@ -59,4 +73,4 @@
 
 ---
 
-**Note**: Workout Coach è già molto completo con 40+ esercizi e timer preciso, pronto per uso professionale.
+**Note**: 80 esercizi a corpo libero, dati salvati solo nel browser (usa Esporta per il backup).

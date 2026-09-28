@@ -159,6 +159,28 @@
             backdrop-filter: blur(5px);
         }
 
+        /* Finestra di condivisione (prima non aveva stile ed era sempre visibile in fondo alla pagina) */
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: var(--modal-bg);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+        }
+
+        .modal-content {
+            background: var(--card-bg);
+            color: var(--text-primary);
+            border-radius: 20px;
+            padding: 25px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
         .avatar-selector-content {
             position: absolute;
             top: 50%;
@@ -1334,6 +1356,48 @@
         </div>
     </div>
 
+    <!-- Social Share Modal -->
+    <div id="shareModal" class="modal">
+        <div class="modal-content" style="max-width: 500px; text-align: center;">
+            <h3 style="color: var(--accent-color); margin-bottom: 20px;">📱 Condividi i Tuoi Risultati</h3>
+            
+            <div class="share-stats" id="shareStats" style="background: var(--timer-bg); padding: 20px; border-radius: 15px; margin-bottom: 20px;">
+                <div style="font-size: 1.2em; color: var(--text-primary); margin-bottom: 10px;">🏆 <strong>Sessione Completata!</strong></div>
+                <div id="shareStatsContent"></div>
+            </div>
+            
+            <div class="share-options" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                <button class="btn btn-social" onclick="shareToWhatsApp()" style="font-size: 0.9em;">
+                    💬 WhatsApp
+                </button>
+                <button class="btn btn-info" onclick="shareToFacebook()" style="font-size: 0.9em;">
+                    📘 Facebook  
+                </button>
+                <button class="btn btn-warning" onclick="shareToInstagram()" style="font-size: 0.9em;">
+                    📸 Instagram
+                </button>
+                <button class="btn btn-secondary" onclick="copyShareText(this)" style="font-size: 0.9em;">
+                    📋 Copia Testo
+                </button>
+            </div>
+            
+            <div class="share-image-section" style="margin-bottom: 20px;">
+                <button class="btn btn-success" onclick="generateShareImage()" style="margin-bottom: 15px;">
+                    🖼️ Genera Immagine Condivisione
+                </button>
+                <canvas id="shareCanvas" style="display: none; max-width: 100%; height: auto; border-radius: 10px; border: 2px solid var(--border-color);"></canvas>
+                <div id="shareImageActions" style="display: none; margin-top: 10px;">
+                    <button class="btn btn-primary" onclick="downloadShareImage()">💾 Scarica Immagine</button>
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 10px; justify-content: center;">
+                <button class="btn btn-secondary" onclick="closeShareModal()">Chiudi</button>
+                <button class="btn btn-primary" onclick="shareProgress()">📊 Condividi Progresso</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Dark Mode Toggle System
         function initializeTheme() {
@@ -1501,7 +1565,7 @@
             normal: { name: 'Normal', minMinutes: 20, maxMinutes: 50, icon: '⏰' },
             berserk: { name: 'Berserk', minMinutes: 4, maxMinutes: 10, icon: '⚡' },
             sprint: { name: 'Sprint', minMinutes: 2, maxMinutes: 5, icon: '🏃' },
-            progressive: { name: 'Progressive', minMinutes: 30, maxMinutes: 5, icon: '📈' }
+            progressive: { name: 'Progressive', minMinutes: 5, maxMinutes: 30, icon: '📈' }
         };
         
         const difficultyLevels = {
@@ -1536,9 +1600,48 @@
         let sessionStats = { streak: 0, totalExercises: 0, sessionStart: null };
         let progressiveCount = 0;
         let userId = null;
-        let dashboardCache = { lastUpdate: 0, data: null };
         let currentAvatar = '👤';
         let clockTimer = null;
+        let longestStreak = 0;
+        let taskDueAt = 0;
+        const MAX_HISTORY = 500;
+        const APP_TITLE = document.title;
+
+        // I nomi arrivano anche da file importati: vanno mostrati come testo
+        function escapeHtml(text) {
+            return String(text ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // completedAt: ISO per i nuovi esercizi, "gg/mm/aaaa, hh:mm:ss" per quelli vecchi
+        function parseCompletedAt(value) {
+            const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4}),?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(value || '');
+            if (m) return new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], +(m[6] || 0));
+            return new Date(value);
+        }
+
+        function formatCompletedAt(value) {
+            const date = parseCompletedAt(value);
+            return isNaN(date) ? (value || '') : date.toLocaleString('it-IT');
+        }
+
+        function normalizeSessionStats(stats) {
+            return {
+                streak: 0,
+                totalExercises: 0,
+                sessions: 0,
+                totalSeconds: 0,
+                ...(stats || {}),
+                // Una sessione non sopravvive alla chiusura della pagina
+                sessionStart: null,
+                pauseTime: 0,
+                pauseStart: null
+            };
+        }
 
         // Avatar options
         const avatarOptions = [
@@ -1611,6 +1714,8 @@
                     completedExercises: completedExercises,
                     likedExercises: Array.from(likedExercises),
                     sessionStats: sessionStats,
+                    avatar: currentAvatar,
+                    longestStreak: longestStreak,
                     exportDate: new Date().toISOString()
                 };
                 
@@ -1650,6 +1755,11 @@
                             throw new Error('File non valido');
                         }
                         
+                        if (!confirm(`Importare i dati? Sostituiranno quelli attuali (${sessionStats.totalExercises} esercizi completati).`)) {
+                            return;
+                        }
+                        if (isActive) stopSession(true);
+
                         // Restore data
                         userId = data.userId;
                         currentTimerMode = data.timerMode || 'normal';
@@ -1658,7 +1768,9 @@
                         isSoundEnabled = data.soundEnabled !== undefined ? data.soundEnabled : true;
                         completedExercises = data.completedExercises || [];
                         likedExercises = new Set(data.likedExercises || []);
-                        sessionStats = data.sessionStats || { streak: 0, totalExercises: 0, sessionStart: null };
+                        sessionStats = normalizeSessionStats(data.sessionStats);
+                        currentAvatar = data.avatar || currentAvatar;
+                        longestStreak = Math.max(data.longestStreak || 0, sessionStats.streak);
                         
                         // Update localStorage
                         localStorage.setItem('workoutCoach_userId', userId);
@@ -1736,8 +1848,15 @@
                     isSoundEnabled = data.soundEnabled !== undefined ? data.soundEnabled : true;
                     completedExercises = data.completedExercises || [];
                     likedExercises = new Set(data.likedExercises || []);
-                    sessionStats = data.sessionStats || { streak: 0, totalExercises: 0, sessionStart: null };
+                    sessionStats = normalizeSessionStats(data.sessionStats);
                     currentAvatar = data.avatar || '👤';
+                    longestStreak = data.longestStreak || 0;
+                } else {
+                    completedExercises = [];
+                    likedExercises = new Set();
+                    sessionStats = normalizeSessionStats();
+                    currentAvatar = '👤';
+                    longestStreak = 0;
                 }
             } catch (e) {
                 console.log('Error loading user data:', e);
@@ -1751,10 +1870,11 @@
                     difficulty: currentDifficulty,
                     category: currentCategory,
                     soundEnabled: isSoundEnabled,
-                    completedExercises: completedExercises.slice(0, 100),
+                    completedExercises: completedExercises.slice(0, MAX_HISTORY),
                     likedExercises: Array.from(likedExercises),
                     sessionStats: sessionStats,
-                    avatar: currentAvatar
+                    avatar: currentAvatar,
+                    longestStreak: longestStreak
                 };
                 localStorage.setItem('workoutCoach_' + userId.slice(-8), JSON.stringify(data));
             } catch (e) {
@@ -1772,7 +1892,7 @@
             // Event listeners with null checks
             if (elements.startBtn) elements.startBtn.addEventListener('click', startWorkoutSession);
             if (elements.pauseBtn) elements.pauseBtn.addEventListener('click', togglePause);
-            if (elements.stopBtn) elements.stopBtn.addEventListener('click', stopSession);
+            if (elements.stopBtn) elements.stopBtn.addEventListener('click', () => stopSession());
             if (elements.timerModeBtn) elements.timerModeBtn.addEventListener('click', cycleTimerMode);
             if (elements.difficultyBtn) elements.difficultyBtn.addEventListener('click', cycleDifficulty);
             if (elements.categoryBtn) elements.categoryBtn.addEventListener('click', cycleCategory);
@@ -1799,19 +1919,12 @@
                 }
             });
             
-            // PWA Installation prompt
-            let deferredPrompt;
-            window.addEventListener('beforeinstallprompt', (e) => {
-                e.preventDefault();
-                deferredPrompt = e;
-                
-                // Show install button after first session
-                setTimeout(() => {
-                    if (deferredPrompt && sessionStats.totalExercises > 0) {
-                        showInstallPrompt();
-                    }
-                }, 10000);
-            });
+            // Chiude il selettore avatar cliccando fuori (registrato una sola volta)
+            if (elements.avatarSelector) {
+                elements.avatarSelector.addEventListener('click', (e) => {
+                    if (e.target === elements.avatarSelector) hideAvatarSelector();
+                });
+            }
             
             // Controllo orario notturno solo se necessario
             setInterval(() => {
@@ -1829,9 +1942,13 @@
             // Initialize avatar selector
             initializeAvatarSelector();
             
-            // Cleanup on page unload
-            window.addEventListener('beforeunload', () => {
-                if (clockTimer) clearInterval(clockTimer);
+            // Chiudendo la pagina durante una sessione, il tempo fatto viene comunque conteggiato
+            window.addEventListener('pagehide', () => {
+                if (isActive) {
+                    sessionStats.totalSeconds = (sessionStats.totalSeconds || 0) + getSessionElapsed();
+                    sessionStats.sessionStart = null;
+                    saveUserData();
+                }
             });
             
             updateUI();
@@ -1865,21 +1982,19 @@
             showMessage(`Categoria: ${categories[currentCategory].name} ${categories[currentCategory].icon}`);
         }
         
+        // Secondi di sessione effettivi (pause escluse)
+        function getSessionElapsed() {
+            if (!sessionStats.sessionStart) return 0;
+            let elapsed = Date.now() - sessionStats.sessionStart - (sessionStats.pauseTime || 0);
+            if (isPaused && sessionStats.pauseStart) {
+                elapsed -= Date.now() - sessionStats.pauseStart;
+            }
+            return Math.max(0, Math.floor(elapsed / 1000));
+        }
+
         function updateSessionTime() {
             if (sessionStats.sessionStart && isActive) {
-                let elapsed = Math.floor((Date.now() - sessionStats.sessionStart) / 1000);
-                
-                // Sottrai il tempo totale di pausa
-                if (sessionStats.pauseTime) {
-                    elapsed -= Math.floor(sessionStats.pauseTime / 1000);
-                }
-                
-                // Se in pausa, sottrai anche il tempo di pausa corrente
-                if (isPaused && sessionStats.pauseStart) {
-                    elapsed -= Math.floor((Date.now() - sessionStats.pauseStart) / 1000);
-                }
-                
-                elapsed = Math.max(0, elapsed);
+                const elapsed = getSessionElapsed();
                 const minutes = Math.floor(elapsed / 60);
                 const seconds = elapsed % 60;
                 if (elements.sessionTime) {
@@ -1952,11 +2067,11 @@
             let maxMinutes = mode.maxMinutes;
             
             if (currentTimerMode === 'progressive') {
-                progressiveCount++;
-                // Progressive mode gets shorter over time
+                // Parte da 25-30 minuti e accorcia di 2,5 minuti a ogni esercizio, fino a 5
                 const reduction = Math.floor(progressiveCount * 2.5);
-                minMinutes = Math.max(mode.minMinutes - reduction, mode.minMinutes);
+                progressiveCount++;
                 maxMinutes = Math.max(mode.maxMinutes - reduction, mode.minMinutes);
+                minMinutes = Math.max(maxMinutes - 5, mode.minMinutes);
             }
             
             return Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) + minMinutes;
@@ -1993,34 +2108,39 @@
         }
 
         // Timer principale con precisione migliorata
+        function setNewTask(task) {
+            currentTask = task;
+            currentTaskLiked = likedExercises.has(task.id);
+            currentTaskDone = false;
+        }
+
+        function scheduleNextTask() {
+            timeLeft = calculateNextInterval() * 60;
+            taskDueAt = Date.now() + timeLeft * 1000;
+        }
+
+        // Il conto alla rovescia si basa sull'orario di scadenza: resta preciso anche
+        // quando il browser rallenta i timer delle schede in background
         function startTimer() {
             if (timer) clearInterval(timer);
             
-            let lastTime = Date.now();
-            
             timer = setInterval(() => {
                 if (!isPaused && isActive) {
-                    const currentTime = Date.now();
-                    const deltaTime = Math.floor((currentTime - lastTime) / 1000);
-                    lastTime = currentTime;
-                    
-                    // Sottrai il tempo reale trascorso invece di sempre 1 secondo
-                    timeLeft = Math.max(0, timeLeft - deltaTime);
+                    timeLeft = Math.max(0, Math.ceil((taskDueAt - Date.now()) / 1000));
                     
                     if (timeLeft <= 0) {
-                        // Nuovo task
+                        // Un esercizio saltato interrompe lo streak
+                        if (currentTask && !currentTaskDone) {
+                            sessionStats.streak = 0;
+                        }
                         const newTask = generateWorkoutTask();
-                        currentTask = newTask;
-                        currentTaskLiked = false;
-                        currentTaskDone = false;
+                        setNewTask(newTask);
                         showMessage(`Nuovo task di workout! 🎯 ${categories[newTask.category]?.icon || ''}`);
+                        document.title = `🔔 ${newTask.name} - ${APP_TITLE}`;
                         
                         playNotificationSound();
-                        
-                        // Calcola prossimo timer
-                        const randomMinutes = calculateNextInterval();
-                        timeLeft = randomMinutes * 60;
-                        lastTime = Date.now(); // Reset del tempo di riferimento
+                        scheduleNextTask();
+                        saveUserData();
                     }
                     
                     updateUI();
@@ -2032,7 +2152,7 @@
         function checkNightTime() {
             const hour = new Date().getHours();
             if ((hour >= 22 || hour < 6) && isActive) {
-                stopSession();
+                stopSession(true);
                 showMessage("L'applicazione è disattivata per la notte (22:00 - 06:00) 🌙");
             }
         }
@@ -2054,21 +2174,18 @@
                 return;
             }
 
-            const firstTask = generateWorkoutTask();
-            currentTask = firstTask;
-            currentTaskLiked = false;
-            currentTaskDone = false;
+            setNewTask(generateWorkoutTask());
             isActive = true;
             isPaused = false;
             sessionStats.sessionStart = Date.now();
             sessionStats.pauseTime = 0;
             sessionStats.pauseStart = null;
+            sessionStats.sessions = (sessionStats.sessions || 0) + 1;
             progressiveCount = 0;
             
             showMessage(`Sessione ${timerModes[currentTimerMode].name} avviata! ${timerModes[currentTimerMode].icon}`);
             
-            const initialMinutes = calculateNextInterval();
-            timeLeft = initialMinutes * 60;
+            scheduleNextTask();
             
             playNotificationSound();
             startTimer();
@@ -2078,10 +2195,13 @@
 
         function togglePause() {
             if (isPaused) {
-                // Riprendendo dalla pausa, aggiorna il tempo di riferimento
+                // Riprendendo dalla pausa: il tempo rimasto riparte da dove si era fermato
                 sessionStats.pauseTime = (sessionStats.pauseTime || 0) + (Date.now() - sessionStats.pauseStart);
+                sessionStats.pauseStart = null;
+                taskDueAt = Date.now() + timeLeft * 1000;
             } else {
-                // Iniziando la pausa, segna l'inizio
+                // Iniziando la pausa, congela il tempo rimasto
+                timeLeft = Math.max(0, Math.ceil((taskDueAt - Date.now()) / 1000));
                 sessionStats.pauseStart = Date.now();
             }
             
@@ -2090,10 +2210,14 @@
             updateUI();
         }
 
-        function stopSession() {
-            if (sessionStats.sessionStart && !confirm('Sei sicuro di voler terminare la sessione?')) {
+        // force: chiusura automatica (notte, import) senza chiedere conferma
+        function stopSession(force = false) {
+            if (!isActive) return;
+            if (force !== true && !confirm('Sei sicuro di voler terminare la sessione?')) {
                 return;
             }
+            sessionStats.totalSeconds = (sessionStats.totalSeconds || 0) + getSessionElapsed();
+            document.title = APP_TITLE;
             isActive = false;
             isPaused = false;
             currentTask = null;
@@ -2142,13 +2266,6 @@
             const avatarOptions = elements.avatarGrid.querySelectorAll('.avatar-option');
             avatarOptions.forEach(option => {
                 option.classList.toggle('selected', option.textContent === currentAvatar);
-            });
-            
-            // Close when clicking outside content
-            elements.avatarSelector.addEventListener('click', (e) => {
-                if (e.target === elements.avatarSelector) {
-                    hideAvatarSelector();
-                }
             });
         }
 
@@ -2218,14 +2335,16 @@
             sessionStats.totalExercises++;
             sessionStats.streak++;
             
+            longestStreak = Math.max(longestStreak, sessionStats.streak);
+            document.title = APP_TITLE;
+            
             completedExercises.unshift({
                 ...currentTask,
-                completedAt: new Date().toLocaleString('it-IT')
+                completedAt: new Date().toISOString()
             });
             
-            // Mantieni solo gli ultimi 50
-            if (completedExercises.length > 50) {
-                completedExercises = completedExercises.slice(0, 50);
+            if (completedExercises.length > MAX_HISTORY) {
+                completedExercises = completedExercises.slice(0, MAX_HISTORY);
             }
             
             showMessage("Esercizio completato! Ottimo lavoro! 💪");
@@ -2329,21 +2448,21 @@
             // Log completati
             if (completedExercises.length > 0) {
                 elements.completedCard.classList.remove('hidden');
-                elements.completedCount.textContent = completedExercises.length;
+                elements.completedCount.textContent = sessionStats.totalExercises || completedExercises.length;
                 
                 elements.completedList.innerHTML = '';
                 completedExercises.slice(0, 10).forEach(exercise => {
                     const item = document.createElement('div');
                     item.className = 'completed-item';
                     const categoryIcon = categories[exercise.category]?.icon || '🎯';
-                    const difficultyBadge = exercise.difficulty ? `<span style="background: ${difficultyLevels[exercise.difficulty].color}; color: white; padding: 2px 6px; border-radius: 10px; font-size: 0.7em;">${difficultyLevels[exercise.difficulty].name}</span>` : '';
+                    const difficultyBadge = difficultyLevels[exercise.difficulty] ? `<span style="background: ${difficultyLevels[exercise.difficulty].color}; color: white; padding: 2px 6px; border-radius: 10px; font-size: 0.7em;">${difficultyLevels[exercise.difficulty].name}</span>` : '';
                     item.innerHTML = `
                         <div>
-                            <span class="completed-name">${categoryIcon} ${exercise.name}</span>
-                            ${exercise.quantity ? `<span class="completed-quantity">- ${exercise.quantity}</span>` : ''}
+                            <span class="completed-name">${categoryIcon} ${escapeHtml(exercise.name)}</span>
+                            ${exercise.quantity ? `<span class="completed-quantity">- ${escapeHtml(exercise.quantity)}</span>` : ''}
                             ${difficultyBadge}
                         </div>
-                        <div class="completed-time">${exercise.completedAt}</div>
+                        <div class="completed-time">${escapeHtml(formatCompletedAt(exercise.completedAt))}</div>
                     `;
                     elements.completedList.appendChild(item);
                 });
@@ -2365,89 +2484,28 @@
         }
         
         function updateDashboard() {
-            const now = Date.now();
-            // Cache dashboard calculations for 30 seconds
-            if (dashboardCache.lastUpdate + 30000 > now && dashboardCache.data) {
-                renderDashboardFromCache();
-                return;
-            }
-            
             updateOverviewCards();
             updateCategoryChart();
             updateDifficultyProgress();
             updateWeeklyActivity();
-            
-            dashboardCache.lastUpdate = now;
             updateAchievements();
             updateFavoriteExercises();
         }
         
-        function renderDashboardFromCache() {
-            // Simple cache implementation - just skip expensive recalculations
-            return;
-        }
-        
-        function showInstallPrompt() {
-            if (!deferredPrompt) return;
-            
-            const installMessage = confirm(
-                '🏠 Vuoi installare Workout Coach sul desktop?\n\n' +
-                '✅ Accesso rapido dalla scrivania\n' +
-                '✅ Funziona offline\n' +
-                '✅ Esperienza app nativa\n\n' +
-                'Clicca OK per installare!'
-            );
-            
-            if (installMessage) {
-                deferredPrompt.prompt();
-                deferredPrompt.userChoice.then((choiceResult) => {
-                    if (choiceResult.outcome === 'accepted') {
-                        showMessage('App installata con successo! 🎉');
-                    }
-                    deferredPrompt = null;
-                });
-            } else {
-                deferredPrompt = null;
-            }
+        // Tempo totale di allenamento, compresa la sessione in corso
+        function getTotalSeconds() {
+            return (sessionStats.totalSeconds || 0) + (isActive ? getSessionElapsed() : 0);
         }
         
         function updateOverviewCards() {
-            const totalSessions = Math.floor(completedExercises.length / 3); // Rough estimate
-            const totalMinutes = completedExercises.length * 2; // Estimate 2 min per exercise
+            const totalMinutes = Math.floor(getTotalSeconds() / 60);
             const hours = Math.floor(totalMinutes / 60);
             const minutes = totalMinutes % 60;
             
-            document.getElementById('totalWorkouts').textContent = totalSessions;
+            document.getElementById('totalWorkouts').textContent = sessionStats.sessions || 0;
             document.getElementById('totalTime').textContent = `${hours}h ${minutes}m`;
-            document.getElementById('longestStreak').textContent = Math.max(sessionStats.streak, getStoredLongestStreak());
-            document.getElementById('totalExercises').textContent = completedExercises.length;
-        }
-        
-        function getStoredLongestStreak() {
-            try {
-                const saved = localStorage.getItem('workoutCoach_' + userId.slice(-8));
-                if (saved) {
-                    const data = JSON.parse(saved);
-                    return data.longestStreak || 0;
-                }
-            } catch (e) {
-                return 0;
-            }
-            return 0;
-        }
-        
-        function updateLongestStreak() {
-            const currentLongest = getStoredLongestStreak();
-            if (sessionStats.streak > currentLongest) {
-                try {
-                    const saved = localStorage.getItem('workoutCoach_' + userId.slice(-8));
-                    const data = saved ? JSON.parse(saved) : {};
-                    data.longestStreak = sessionStats.streak;
-                    localStorage.setItem('workoutCoach_' + userId.slice(-8), JSON.stringify(data));
-                } catch (e) {
-                    console.log('Error updating longest streak:', e);
-                }
-            }
+            document.getElementById('longestStreak').textContent = Math.max(sessionStats.streak, longestStreak);
+            document.getElementById('totalExercises').textContent = sessionStats.totalExercises || 0;
         }
         
         function updateCategoryChart() {
@@ -2546,7 +2604,7 @@
                 const dateStr = date.toDateString();
                 
                 const dayExercises = completedExercises.filter(ex => {
-                    const exDate = new Date(ex.completedAt);
+                    const exDate = parseCompletedAt(ex.completedAt);
                     return exDate.toDateString() === dateStr;
                 }).length;
                 
@@ -2584,9 +2642,9 @@
         
         function updateAchievements() {
             const achievements = [];
-            const totalExercises = completedExercises.length;
+            const totalExercises = sessionStats.totalExercises || 0;
             const currentStreak = sessionStats.streak;
-            const longestStreak = Math.max(currentStreak, getStoredLongestStreak());
+            const bestStreak = Math.max(currentStreak, longestStreak);
             
             // Achievement definitions
             if (totalExercises >= 10) achievements.push({ icon: '🎆', name: 'First Steps', desc: '10 esercizi completati' });
@@ -2594,8 +2652,8 @@
             if (totalExercises >= 100) achievements.push({ icon: '💯', name: 'Century Club', desc: '100 esercizi completati' });
             
             if (currentStreak >= 5) achievements.push({ icon: '🔥', name: 'Fire Streak', desc: 'Streak di 5 esercizi' });
-            if (longestStreak >= 10) achievements.push({ icon: '⭐', name: 'Dedicated', desc: 'Streak record di 10+' });
-            if (longestStreak >= 20) achievements.push({ icon: '🎆', name: 'Unstoppable', desc: 'Streak record di 20+' });
+            if (bestStreak >= 10) achievements.push({ icon: '⭐', name: 'Dedicated', desc: 'Streak record di 10+' });
+            if (bestStreak >= 20) achievements.push({ icon: '🎆', name: 'Unstoppable', desc: 'Streak record di 20+' });
             
             // Category-specific achievements
             const categoryCounts = {};
@@ -2670,20 +2728,13 @@
                 favoriteElement.className = 'favorite-item';
                 const categoryIcon = categories[exercise.category]?.icon || '🎯';
                 favoriteElement.innerHTML = `
-                    <div class="favorite-name">${categoryIcon} ${exercise.name}</div>
+                    <div class="favorite-name">${categoryIcon} ${escapeHtml(exercise.name)}</div>
                     <div class="favorite-count">Completato ${count} volte</div>
                 `;
                 favoritesContainer.appendChild(favoriteElement);
             });
         }
         
-        // Update longest streak when completing exercises
-        const originalHandleTaskComplete = handleTaskComplete;
-        handleTaskComplete = function() {
-            originalHandleTaskComplete.call(this);
-            updateLongestStreak();
-        };
-
         // Avvia app
         document.addEventListener('DOMContentLoaded', () => {
             init();
@@ -2744,48 +2795,49 @@
             showKeyboardHelp();
         }
 
+        function isAnyModalOpen() {
+            return elements.avatarSelector.style.display === 'block' ||
+                document.getElementById('shareModal').style.display === 'flex' ||
+                !elements.dashboardCard.classList.contains('hidden');
+        }
+
+        // Scorciatoie collegate alle funzioni reali dell'app (prima chiamavano funzioni inesistenti)
         function handleGlobalKeyboard(e) {
-            // Skip if user is typing in inputs
-            if (e.target.matches('input, textarea, select')) {
+            if (e.target.matches('input, textarea, select') || e.ctrlKey || e.metaKey || e.altKey) {
                 return;
             }
-            
-            // Global shortcuts
+            // Spazio/Invio su un bottone lo attivano già: evita la doppia azione
+            if ((e.key === ' ' || e.key === 'Enter') && e.target.closest('button')) {
+                return;
+            }
+            if (e.key === 'Escape') {
+                closeAllModals();
+                return;
+            }
+            if (isAnyModalOpen()) {
+                return;
+            }
+
             if (e.key === ' ') {
                 e.preventDefault();
-                if (currentState === 'idle') {
-                    startWorkout();
-                } else if (currentState === 'workout') {
-                    pauseResumeTimer();
-                } else if (currentState === 'rest') {
-                    pauseResumeTimer();
-                }
-            } else if (e.key === 'Escape') {
-                e.preventDefault();
-                if (currentState === 'workout' || currentState === 'rest') {
-                    stopWorkout();
+                if (isActive) {
+                    togglePause();
                 } else {
-                    closeAllModals();
+                    startWorkoutSession();
                 }
             } else if (e.key === 'Enter') {
-                e.preventDefault();
-                if (currentState === 'workout' || currentState === 'rest') {
-                    completeCurrentSet();
+                if (currentTask && !currentTaskDone) {
+                    e.preventDefault();
+                    handleTaskComplete();
                 }
-            } else if (e.key === 'r') {
-                e.preventDefault();
-                if (currentState === 'idle') {
-                    resetSession();
-                }
-            } else if (e.key === 'h' || e.key === '?') {
-                e.preventDefault();
-                showKeyboardHelp(true);
+            } else if (e.key === 'l') {
+                handleLikeToggle();
             } else if (e.key === 'd') {
-                e.preventDefault();
                 showDashboard();
             } else if (e.key === 'a') {
-                e.preventDefault();
-                openAvatarSelector();
+                showAvatarSelector();
+            } else if (e.key === 'h' || e.key === '?') {
+                showKeyboardHelp(true);
             }
         }
 
@@ -2799,10 +2851,10 @@
         }
 
         function setupModalNavigation() {
-            // Enhanced modal focus trap
+            // Tiene il focus dentro il selettore avatar quando è aperto
             document.addEventListener('keydown', (e) => {
-                const avatarModal = document.getElementById('avatar-selector');
-                if (avatarModal && avatarModal.style.display !== 'none' && e.key === 'Tab') {
+                const avatarModal = elements.avatarSelector;
+                if (avatarModal && avatarModal.style.display === 'block' && e.key === 'Tab') {
                     trapFocusInAvatarModal(e, avatarModal);
                 }
             });
@@ -2830,9 +2882,10 @@
         }
 
         function closeAllModals() {
-            const avatarModal = document.getElementById('avatar-selector');
-            if (avatarModal) {
-                avatarModal.style.display = 'none';
+            hideAvatarSelector();
+            closeShareModal();
+            if (!elements.dashboardCard.classList.contains('hidden')) {
+                closeDashboard();
             }
         }
 
@@ -2845,11 +2898,12 @@
                 helpDiv.innerHTML = `
                     <strong>Scorciatoie da tastiera:</strong><br>
                     <kbd>Spazio</kbd> Avvia/Pausa<br>
-                    <kbd>Enter</kbd> Completa set<br>
-                    <kbd>Esc</kbd> Ferma allenamento<br>
-                    <kbd>R</kbd> Reset sessione<br>
+                    <kbd>Invio</kbd> Esercizio fatto<br>
+                    <kbd>L</kbd> Mi piace<br>
                     <kbd>D</kbd> Dashboard<br>
                     <kbd>A</kbd> Cambia avatar<br>
+                    <kbd>Ctrl+S</kbd> Condividi<br>
+                    <kbd>Esc</kbd> Chiudi finestre<br>
                     <kbd>H/?</kbd> Mostra aiuto<br>
                     <small>Tab per navigare tra i controlli</small>
                 `;
@@ -2874,37 +2928,15 @@
             }
         }
 
-        // Enhanced functions with keyboard support
-        function openAvatarSelector() {
-            document.getElementById('avatar-selector').style.display = 'flex';
-            
-            // Focus first avatar option
-            setTimeout(() => {
-                const firstAvatar = document.querySelector('.avatar-option');
-                if (firstAvatar) firstAvatar.focus();
-            }, 100);
-        }
-
-        function selectAvatar(emoji) {
-            currentUser.avatar = emoji;
-            localStorage.setItem('workoutUser', JSON.stringify(currentUser));
-            updateUserDisplay();
-            document.getElementById('avatar-selector').style.display = 'none';
-            
-            // Return focus to avatar button
-            const userAvatar = document.querySelector('.user-avatar');
-            if (userAvatar) userAvatar.focus();
-        }
-
         // === SOCIAL FEATURES ===
+        // Basate sulle statistiche reali dell'app (prima usavano un oggetto "currentUser" inesistente)
         let currentShareData = null;
 
-        // Event listener per pulsante condividi
         document.getElementById('shareBtn').addEventListener('click', () => {
-            if (currentUser.sessionsCompleted > 0) {
+            if (sessionStats.totalExercises > 0) {
                 openShareModal();
             } else {
-                alert('💪 Completa almeno una sessione di allenamento per condividere i tuoi risultati!');
+                showMessage('💪 Completa almeno un esercizio per condividere i tuoi risultati!');
             }
         });
 
@@ -2914,92 +2946,81 @@
             document.getElementById('shareModal').style.display = 'flex';
             
             // Reset canvas if previously shown
-            const canvas = document.getElementById('shareCanvas');
-            const actions = document.getElementById('shareImageActions');
-            canvas.style.display = 'none';
-            actions.style.display = 'none';
+            document.getElementById('shareCanvas').style.display = 'none';
+            document.getElementById('shareImageActions').style.display = 'none';
         }
 
         function closeShareModal() {
             document.getElementById('shareModal').style.display = 'none';
-            currentShareData = null;
         }
 
         function generateShareData() {
-            const user = currentUser;
-            const lastSession = user.sessionHistory[user.sessionHistory.length - 1] || {};
-            
-            const totalWorkoutTime = user.sessionHistory.reduce((total, session) => total + (session.duration || 0), 0);
-            const totalExercises = user.sessionHistory.reduce((total, session) => total + (session.exercisesCompleted || 0), 0);
-            
+            const stats = [
+                { icon: '🏆', label: 'Sessioni', value: sessionStats.sessions || 0, color: 'var(--success-color)' },
+                { icon: '⏱️', label: 'Minuti', value: Math.round(getTotalSeconds() / 60), color: 'var(--accent-color)' },
+                { icon: '💪', label: 'Esercizi', value: sessionStats.totalExercises || 0, color: 'var(--warning-color)' },
+                { icon: '🔥', label: 'Record streak', value: Math.max(longestStreak, sessionStats.streak), color: 'var(--danger-color)' }
+            ];
+
             const shareText = `💪 Workout Coach - I miei risultati!\n\n` +
-                `${user.avatar} ${user.name}\n` +
-                `🏆 Sessioni completate: ${user.sessionsCompleted}\n` +
-                `⏱️ Tempo totale allenamento: ${Math.round(totalWorkoutTime / 60)} minuti\n` +
-                `🎯 Esercizi completati: ${totalExercises}\n` +
-                `📊 Livello: ${user.level}\n` +
-                `🔥 Record personale: ${user.personalBest} secondi\n\n` +
-                `#WorkoutCoach #Fitness #Allenamento`;
+                stats.map(stat => `${stat.icon} ${stat.label}: ${stat.value}`).join('\n') +
+                `\n\n#WorkoutCoach #Fitness #Allenamento`;
 
             const statsHtml = `
                 <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; text-align: center;">
-                    <div>
-                        <div style="font-size: 1.5em; font-weight: bold; color: var(--success-color);">${user.sessionsCompleted}</div>
-                        <div style="font-size: 0.9em; color: var(--text-secondary);">Sessioni</div>
-                    </div>
-                    <div>
-                        <div style="font-size: 1.5em; font-weight: bold; color: var(--accent-color);">${Math.round(totalWorkoutTime / 60)}</div>
-                        <div style="font-size: 0.9em; color: var(--text-secondary);">Minuti</div>
-                    </div>
-                    <div>
-                        <div style="font-size: 1.5em; font-weight: bold; color: var(--warning-color);">${totalExercises}</div>
-                        <div style="font-size: 0.9em; color: var(--text-secondary);">Esercizi</div>
-                    </div>
-                    <div>
-                        <div style="font-size: 1.5em; font-weight: bold; color: var(--danger-color);">${user.personalBest}s</div>
-                        <div style="font-size: 0.9em; color: var(--text-secondary);">Record</div>
-                    </div>
-                </div>
-                <div style="margin-top: 15px; font-size: 1.1em;">
-                    <span style="color: var(--accent-color);">Livello:</span> <strong>${user.level}</strong>
+                    ${stats.map(stat => `
+                        <div>
+                            <div style="font-size: 1.5em; font-weight: bold; color: ${stat.color};">${stat.value}</div>
+                            <div style="font-size: 0.9em; color: var(--text-secondary);">${stat.icon} ${stat.label}</div>
+                        </div>
+                    `).join('')}
                 </div>
             `;
 
-            return {
-                text: shareText,
-                statsHtml: statsHtml,
-                userData: user
-            };
+            return { text: shareText, statsHtml: statsHtml, stats: stats };
         }
 
         function shareToWhatsApp() {
             const text = encodeURIComponent(currentShareData.text);
-            const url = `https://wa.me/?text=${text}`;
-            window.open(url, '_blank');
+            window.open(`https://wa.me/?text=${text}`, '_blank');
         }
 
         function shareToFacebook() {
-            const text = encodeURIComponent(`💪 Ho completato ${currentUser.sessionsCompleted} sessioni con Workout Coach! 🏆`);
+            const text = encodeURIComponent(`💪 Ho completato ${sessionStats.totalExercises} esercizi con Workout Coach! 🏆`);
             const url = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(window.location.href)}&quote=${text}`;
             window.open(url, '_blank');
         }
 
         function shareToInstagram() {
             // Instagram non supporta condivisione diretta via URL, quindi copiamo il testo
-            copyShareText();
-            alert('📸 Testo copiato! Ora puoi incollarlo in un post Instagram insieme a una foto del tuo allenamento!');
+            copyShareText().then(ok => {
+                if (ok) showMessage('📸 Testo copiato! Incollalo in un post Instagram insieme a una foto del tuo allenamento!');
+            });
         }
 
-        function copyShareText() {
-            navigator.clipboard.writeText(currentShareData.text).then(() => {
-                const btn = event.target;
-                const originalText = btn.textContent;
-                btn.textContent = '✅ Copiato!';
-                setTimeout(() => {
-                    btn.textContent = originalText;
-                }, 2000);
-            }).catch(() => {
-                alert('❌ Impossibile copiare automaticamente. Copia manualmente il testo dalla sezione sopra.');
+        // btn (facoltativo): il bottone che mostra la conferma "Copiato"
+        function copyShareText(btn) {
+            const text = currentShareData.text;
+            const copied = navigator.clipboard && window.isSecureContext
+                ? navigator.clipboard.writeText(text).then(() => true, () => false)
+                : Promise.resolve(false);
+            return copied.then(ok => {
+                if (!ok) {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = text;
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+                    textarea.remove();
+                }
+                if (ok && btn) {
+                    const originalText = btn.textContent;
+                    btn.textContent = '✅ Copiato!';
+                    setTimeout(() => { btn.textContent = originalText; }, 2000);
+                } else if (!ok) {
+                    showMessage('❌ Impossibile copiare automaticamente il testo');
+                }
+                return ok;
             });
         }
 
@@ -3007,67 +3028,49 @@
             const canvas = document.getElementById('shareCanvas');
             const ctx = canvas.getContext('2d');
             
-            // Imposta dimensioni canvas
             canvas.width = 800;
             canvas.height = 600;
             
-            // Sfondo gradiente
             const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
             gradient.addColorStop(0, '#667eea');
             gradient.addColorStop(1, '#764ba2');
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            // Aggiungi pattern di sfondo
             ctx.globalAlpha = 0.1;
             ctx.fillStyle = 'white';
-            for(let i = 0; i < 20; i++) {
-                for(let j = 0; j < 15; j++) {
-                    if((i + j) % 2 === 0) {
+            for (let i = 0; i < 20; i++) {
+                for (let j = 0; j < 15; j++) {
+                    if ((i + j) % 2 === 0) {
                         ctx.fillRect(i * 40, j * 40, 20, 20);
                     }
                 }
             }
             ctx.globalAlpha = 1.0;
             
-            // Testo principale
             ctx.fillStyle = 'white';
             ctx.font = 'bold 48px Arial, sans-serif';
             ctx.textAlign = 'center';
             ctx.fillText('💪 Workout Coach', canvas.width / 2, 100);
             
-            // Nome utente e avatar
             ctx.font = 'bold 36px Arial, sans-serif';
-            ctx.fillText(`${currentUser.avatar} ${currentUser.name}`, canvas.width / 2, 180);
-            
-            // Statistiche
-            const stats = [
-                { label: 'Sessioni Completate', value: currentUser.sessionsCompleted, icon: '🏆' },
-                { label: 'Tempo Totale', value: `${Math.round(currentUser.sessionHistory.reduce((t, s) => t + (s.duration || 0), 0) / 60)} min`, icon: '⏱️' },
-                { label: 'Livello', value: currentUser.level, icon: '📊' },
-                { label: 'Record Personale', value: `${currentUser.personalBest}s`, icon: '🔥' }
-            ];
+            ctx.fillText(`${currentAvatar} I miei risultati`, canvas.width / 2, 180);
             
             ctx.font = '24px Arial, sans-serif';
-            let yPos = 280;
-            
-            stats.forEach((stat, index) => {
+            currentShareData.stats.forEach((stat, index) => {
                 const x = (index % 2) * 400 + 200;
-                const y = yPos + Math.floor(index / 2) * 80;
-                
+                const y = 280 + Math.floor(index / 2) * 100;
                 ctx.fillText(`${stat.icon} ${stat.label}`, x, y);
                 ctx.font = 'bold 32px Arial, sans-serif';
-                ctx.fillText(stat.value, x, y + 35);
+                ctx.fillText(String(stat.value), x, y + 40);
                 ctx.font = '24px Arial, sans-serif';
             });
             
-            // Footer
             ctx.font = '20px Arial, sans-serif';
             ctx.globalAlpha = 0.8;
             ctx.fillText('#WorkoutCoach #Fitness #Allenamento', canvas.width / 2, 550);
             ctx.globalAlpha = 1.0;
             
-            // Mostra canvas e pulsanti
             canvas.style.display = 'block';
             document.getElementById('shareImageActions').style.display = 'block';
         }
@@ -3075,7 +3078,7 @@
         function downloadShareImage() {
             const canvas = document.getElementById('shareCanvas');
             const link = document.createElement('a');
-            link.download = `workout-coach-${currentUser.name}-${new Date().toISOString().split('T')[0]}.png`;
+            link.download = `workout-coach-${new Date().toISOString().split('T')[0]}.png`;
             link.href = canvas.toDataURL();
             link.click();
         }
@@ -3087,8 +3090,7 @@
                     text: currentShareData.text,
                     url: window.location.href
                 }).catch((error) => {
-                    console.log('Condivisione annullata', error);
-                    copyShareText();
+                    if (error.name !== 'AbortError') copyShareText();
                 });
             } else {
                 copyShareText();
@@ -3102,61 +3104,14 @@
             }
         });
 
-        // Supporto keyboard shortcuts per social
+        // Ctrl+S apre la condivisione (e.key è minuscolo quando Shift non è premuto)
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'S' && e.ctrlKey && !e.shiftKey) {
+            if (e.key.toLowerCase() === 's' && e.ctrlKey && !e.shiftKey) {
                 e.preventDefault();
                 document.getElementById('shareBtn').click();
-            }
-            if (e.key === 'Escape') {
-                const shareModal = document.getElementById('shareModal');
-                if (shareModal.style.display === 'flex') {
-                    closeShareModal();
-                }
             }
         });
     </script>
 
-    <!-- Social Share Modal -->
-    <div id="shareModal" class="modal">
-        <div class="modal-content" style="max-width: 500px; text-align: center;">
-            <h3 style="color: var(--accent-color); margin-bottom: 20px;">📱 Condividi i Tuoi Risultati</h3>
-            
-            <div class="share-stats" id="shareStats" style="background: var(--timer-bg); padding: 20px; border-radius: 15px; margin-bottom: 20px;">
-                <div style="font-size: 1.2em; color: var(--text-primary); margin-bottom: 10px;">🏆 <strong>Sessione Completata!</strong></div>
-                <div id="shareStatsContent"></div>
-            </div>
-            
-            <div class="share-options" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin-bottom: 20px;">
-                <button class="btn btn-social" onclick="shareToWhatsApp()" style="font-size: 0.9em;">
-                    💬 WhatsApp
-                </button>
-                <button class="btn btn-info" onclick="shareToFacebook()" style="font-size: 0.9em;">
-                    📘 Facebook  
-                </button>
-                <button class="btn btn-warning" onclick="shareToInstagram()" style="font-size: 0.9em;">
-                    📸 Instagram
-                </button>
-                <button class="btn btn-secondary" onclick="copyShareText()" style="font-size: 0.9em;">
-                    📋 Copia Testo
-                </button>
-            </div>
-            
-            <div class="share-image-section" style="margin-bottom: 20px;">
-                <button class="btn btn-success" onclick="generateShareImage()" style="margin-bottom: 15px;">
-                    🖼️ Genera Immagine Condivisione
-                </button>
-                <canvas id="shareCanvas" style="display: none; max-width: 100%; height: auto; border-radius: 10px; border: 2px solid var(--border-color);"></canvas>
-                <div id="shareImageActions" style="display: none; margin-top: 10px;">
-                    <button class="btn btn-primary" onclick="downloadShareImage()">💾 Scarica Immagine</button>
-                </div>
-            </div>
-            
-            <div style="display: flex; gap: 10px; justify-content: center;">
-                <button class="btn btn-secondary" onclick="closeShareModal()">Chiudi</button>
-                <button class="btn btn-primary" onclick="shareProgress()">📊 Condividi Progresso</button>
-            </div>
-        </div>
-    </div>
 </body>
 </html>
